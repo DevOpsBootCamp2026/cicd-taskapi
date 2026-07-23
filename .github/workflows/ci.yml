@@ -1,0 +1,102 @@
+name: CI
+
+# Run on every push and PR to main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # 1) Lint the code style.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  # 2) Fast unit tests (pure logic, no database).
+  unit-tests:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
+
+  # 3) API / integration tests against a REAL Postgres spun up as a service.
+  api-tests:
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: taskuser
+          POSTGRES_PASSWORD: taskpass
+          POSTGRES_DB: tasksdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U taskuser"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://taskuser:taskpass@localhost:5432/tasksdb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:api
+
+  # 4) Build the Docker image and smoke-test it (proves it actually runs).
+  docker-build:
+    needs: [unit-tests, api-tests]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: taskuser
+          POSTGRES_PASSWORD: taskpass
+          POSTGRES_DB: tasksdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U taskuser"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t taskapi:ci .
+      - name: Run the container against Postgres
+        run: |
+          docker run -d --name taskapi \
+            --add-host=host.docker.internal:host-gateway \
+            -e DATABASE_URL=postgres://taskuser:taskpass@host.docker.internal:5432/tasksdb \
+            -p 3000:3000 taskapi:ci
+      - name: Smoke test /health
+        run: |
+          for i in $(seq 1 15); do
+            if curl -fsS http://localhost:3000/health; then echo "healthy"; exit 0; fi
+            sleep 2
+          done
+          echo "health check failed"; docker logs taskapi; exit 1
+      - name: Cleanup
+        if: always()
+        run: docker rm -f taskapi || true
