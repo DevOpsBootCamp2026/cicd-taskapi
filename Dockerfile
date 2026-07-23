@@ -12,6 +12,7 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
 COPY src ./src
-USER node                 # run as the non-root 'node' user shipped in the image
+# run as the non-root 'node' user shipped in the official image
+USER node
 EXPOSE 3000
 CMD ["node", "src/server.js"]
