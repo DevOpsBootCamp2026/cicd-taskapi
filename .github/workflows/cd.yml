@@ -2,9 +2,14 @@ name: CD - Publish image to GHCR
 
 # Publish when code lands on main, or when a version tag is pushed.
 on:
-  push:
+  # push:
+  #   branches: [main]
+  #   tags: ["v*.*.*"]
+  workflow_run:
+    workflows: ["CI"]
     branches: [main]
-    tags: ["v*.*.*"]
+    types:
+      - completed
 
 # Least privilege: only what we need to push a package and create a release.
 permissions:
